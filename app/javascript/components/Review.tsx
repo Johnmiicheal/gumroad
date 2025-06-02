@@ -5,7 +5,7 @@ import { Review as ReviewType } from "$app/data/product_reviews";
 import { Icon } from "$app/components/Icons";
 import { RatingStars } from "$app/components/RatingStars";
 import { ReviewResponseForm } from "$app/components/ReviewResponseForm";
-import { useUserAgentInfo } from "$app/components/UserAgent";
+import { ReviewVideoPlayer } from "$app/components/ReviewVideoPlayer";
 import { WithTooltip } from "$app/components/WithTooltip";
 
 export type Seller = {
@@ -13,24 +13,6 @@ export type Seller = {
   name: string;
   avatar_url: string;
   profile_url: string;
-};
-
-const DateWithTooltip = ({ date, humanized }: { date: string; humanized: string }) => {
-  const userAgentInfo = useUserAgentInfo();
-
-  return (
-    <WithTooltip
-      tip={new Date(date).toLocaleDateString(userAgentInfo.locale, {
-        month: "long",
-        day: "numeric",
-        year: "numeric",
-      })}
-    >
-      <time className="text-muted" style={{ cursor: "default" }}>
-        {humanized}
-      </time>
-    </WithTooltip>
-  );
 };
 
 const ReviewUserAttribution = ({
@@ -74,7 +56,8 @@ export const Review = ({
           <RatingStars rating={review.rating} />
           {review.is_new ? <span className="pill small primary">New</span> : null}
         </span>
-        <p style={{ margin: 0 }}>{review.message}</p>
+        {review.message ? <p style={{ margin: 0 }}>{review.message}</p> : null}
+        {review.video ? <ReviewVideoPlayer videoId={review.video.id} thumbnail={review.video.thumbnail_url} /> : null}
         <section style={{ display: "flex", gap: "var(--spacer-1)", alignItems: "center", flexWrap: "wrap" }}>
           <ReviewUserAttribution avatarUrl={review.rater.avatar_url} name={review.rater.name} isBuyer />
         </section>
@@ -84,7 +67,6 @@ export const Review = ({
           <p style={{ margin: 0 }}>{review.response.message}</p>
           <section style={{ display: "flex", gap: "var(--spacer-1)", alignItems: "center", flexWrap: "wrap" }}>
             {seller ? <ReviewUserAttribution avatarUrl={seller.avatar_url} name={seller.name} /> : null}
-            <DateWithTooltip date={review.response.created_at.date} humanized={review.response.created_at.humanized} />
             <span className="pill small">Creator</span>
           </section>
         </section>
@@ -94,16 +76,10 @@ export const Review = ({
           <ReviewResponseForm
             message={review.response?.message}
             purchaseId={review.purchase_id}
-            onChange={(message: string) =>
+            onChange={(response) =>
               setReview((prev) => ({
                 ...prev,
-                response: {
-                  message,
-                  created_at: {
-                    date: new Date().toISOString(),
-                    humanized: "just now",
-                  },
-                },
+                response,
               }))
             }
             onEditingChange={setIsEditing}

@@ -30,12 +30,27 @@ class ProductReviewPresenter
       response: product_review.response.present? ?
         {
           message: product_review.response.message,
-          created_at: {
-            date: product_review.response.created_at.iso8601,
-            humanized: "#{time_ago_in_words(product_review.response.created_at)} ago",
-          },
         } :
         nil,
+      video: video_props(product_review.approved_video),
     }
   end
+
+  def review_form_props
+    {
+      rating: product_review.rating,
+      message: product_review.message,
+      video: video_props(product_review.editable_video),
+    }
+  end
+
+  private
+    def video_props(video)
+      return nil unless video.present?
+
+      {
+        id: video.external_id,
+        thumbnail_url: video.video_file.thumbnail_url,
+      }
+    end
 end

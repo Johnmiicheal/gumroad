@@ -26,7 +26,19 @@ export type Address = {
 export type Tracking = { shipped: false } | { shipped: true; url: string | null };
 export type Option = { id: string; name: string };
 export type ReviewResponse = { message: string };
-export type Review = { rating: number; message: string | null; response: ReviewResponse | null };
+export type Review = {
+  rating: number;
+  message: string | null;
+  response: ReviewResponse | null;
+  videos: ReviewVideo[];
+};
+export type ReviewVideo = {
+  id: string;
+  approval_status: "pending_review" | "approved" | "rejected";
+  thumbnail_url: string | null;
+  can_approve: boolean;
+  can_reject: boolean;
+};
 export type Call = { id: string; call_url: string | null; start_time: string; end_time: string };
 export type File = {
   id: string;
@@ -376,8 +388,17 @@ export const updateReviewResponse = (purchaseId: string, message: string) =>
   request({
     method: "PUT",
     accept: "json",
-    url: Routes.product_review_response_path(),
-    data: { purchase_id: purchaseId, message },
+    url: Routes.product_review_response_path(purchaseId),
+    data: { message },
+  }).then((response) => {
+    if (!response.ok) throw new ResponseError();
+  });
+
+export const deleteReviewResponse = (purchaseId: string) =>
+  request({
+    method: "DELETE",
+    accept: "json",
+    url: Routes.product_review_response_path(purchaseId),
   }).then((response) => {
     if (!response.ok) throw new ResponseError();
   });
@@ -411,5 +432,29 @@ export const completeCommission = async (commissionId: string) => {
 
   if (!response.ok) {
     throw new ResponseError(cast<{ errors: string[] }>(await response.json()).errors[0]);
+  }
+};
+
+export const approveReviewVideo = async (videoId: string) => {
+  const response = await request({
+    method: "POST",
+    accept: "json",
+    url: Routes.internal_product_review_video_approvals_url(videoId),
+  });
+
+  if (!response.ok) {
+    throw new ResponseError();
+  }
+};
+
+export const rejectReviewVideo = async (videoId: string) => {
+  const response = await request({
+    method: "POST",
+    accept: "json",
+    url: Routes.internal_product_review_video_rejections_url(videoId),
+  });
+
+  if (!response.ok) {
+    throw new ResponseError();
   }
 };

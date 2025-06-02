@@ -391,7 +391,8 @@ describe "Sales page", type: :feature, js: true do
 
       it "displays the missed posts and allows re-sending them" do
         allow_any_instance_of(User).to receive(:sales_cents_total).and_return(Installment::MINIMUM_SALES_CENTS_VALUE)
-        create(:merchant_account_stripe_connect, user: seller)
+        stripe_connect_account = create(:merchant_account_stripe_connect, user: seller)
+        create(:purchase, seller:, link: product1, merchant_account: stripe_connect_account)
 
         post = posts.last
         visit customers_path
@@ -1545,23 +1546,144 @@ describe "Sales page", type: :feature, js: true do
     end
 
     describe "product review response" do
-      it "allows creating and updating a response" do
+      it "allows creating, updating, and deleting a response" do
         review = create(:product_review, purchase: purchase1, message: "Amazing!")
 
         visit customers_path
         find(:table_row, { "Name" => "Customer 1" }).click
 
-        click_on "Add response"
-        fill_in "Add a response to the review", with: "Thank you!"
-        click_on "Submit response"
+        within_section "Review" do
+          click_on "Add response"
+          fill_in "Add a response to the review", with: "Thank you!"
+          click_on "Submit"
+        end
         expect(page).to have_alert(text: "Response submitted successfully!")
         expect(review.response.reload.message).to eq("Thank you!")
 
-        click_on "Edit response"
-        fill_in "Add a response to the review", with: "Thank you, again!"
-        click_on "Update response"
+        within_section "Review" do
+          click_on "Edit"
+          fill_in "Add a response to the review", with: "Thank you, again!"
+          click_on "Update"
+        end
         expect(page).to have_alert(text: "Response updated successfully!")
         expect(review.response.reload.message).to eq("Thank you, again!")
+
+        within_section "Review" do
+          click_on "Delete"
+          within_modal "Delete this response?" do
+            click_on "Delete"
+          end
+        end
+        expect(page).to have_alert(text: "Response deleted successfully!")
+        expect(page).to have_button("Add response")
+        expect(review.reload.response).to be_nil
+      end
+    end
+
+    describe "product review videos" do
+      let(:review) { create(:product_review, purchase: purchase1, message: "Amazing!") }
+      let!(:pending_video) do
+        create(
+          :product_review_video,
+          :pending_review,
+          product_review: review,
+          video_file: create(:video_file, :with_thumbnail)
+        )
+      end
+      let!(:approved_video) do
+        create(
+          :product_review_video,
+          :approved,
+          product_review: review,
+          video_file: create(:video_file, :with_thumbnail)
+        )
+      end
+
+      it "allows approving a video" do
+        visit customers_path
+        find(:table_row, { "Email" => purchase1.email }).click
+
+        within_section "Review" do
+          within_section "Approved video" do
+            expect(page).to have_image(src: approved_video.video_file.thumbnail_url)
+            expect(page).to have_text("Remove")
+          end
+
+          within_section "Pending video" do
+            expect(page).to have_image(src: pending_video.video_file.thumbnail_url)
+            expect(page).to have_text("Approve")
+            expect(page).to have_text("Reject")
+          end
+        end
+
+        click_on "Approve"
+        expect(page).to have_alert(text: "This video is now live!")
+        expect(pending_video.reload.approved?).to eq(true)
+
+        within_section "Review" do
+          within_section "Approved video" do
+            expect(page).to have_image(src: pending_video.video_file.thumbnail_url)
+          end
+          expect(page).to_not have_section("Pending video")
+        end
+      end
+
+      it "allows rejecting a video" do
+        visit customers_path
+        find(:table_row, { "Email" => purchase1.email }).click
+
+        within_section "Review" do
+          within_section "Approved video" do
+            expect(page).to have_image(src: approved_video.video_file.thumbnail_url)
+            expect(page).to have_text("Remove")
+          end
+
+          within_section "Pending video" do
+            expect(page).to have_image(src: pending_video.video_file.thumbnail_url)
+            expect(page).to have_text("Reject")
+            expect(page).to have_text("Approve")
+          end
+        end
+
+        # Rejecting the pending video should not affect the approved video.
+        within_section "Review" do
+          within_section "Approved video" do
+            expect(page).to have_image(src: approved_video.video_file.thumbnail_url)
+            expect(page).to have_text("Remove")
+          end
+
+          within_section "Pending video" do
+            expect(page).to have_image(src: pending_video.video_file.thumbnail_url)
+            expect(page).to have_text("Reject")
+            expect(page).to have_text("Approve")
+
+            click_on "Reject"
+          end
+        end
+
+        expect(page).to have_alert(text: "This video has been removed.")
+        expect(pending_video.reload.rejected?).to eq(true)
+
+        within_section "Review" do
+          expect(page).to_not have_section("Pending video")
+        end
+
+        # Removing the approved video requires confirmation.
+        within_section "Review" do
+          within_section "Approved video" do
+            expect(page).to have_image(src: approved_video.video_file.thumbnail_url)
+            expect(page).to have_text("Remove")
+
+            click_on "Remove"
+
+            within_modal "Remove approved video?" do
+              click_on "Remove video"
+            end
+          end
+        end
+
+        expect(page).to_not have_section("Approved video")
+        expect(approved_video.reload.rejected?).to eq(true)
       end
     end
 

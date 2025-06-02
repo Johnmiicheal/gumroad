@@ -172,6 +172,10 @@ class ContactingCreatorMailerPreview < ActionMailer::Preview
     ContactingCreatorMailer.affiliates_data(recipient: User.last, tempfile: sample_csv_file, filename: "file")
   end
 
+  def subscribers_data
+    ContactingCreatorMailer.subscribers_data(recipient: User.last, tempfile: sample_csv_file, filename: "file")
+  end
+
   def tax_form_1099k
     ContactingCreatorMailer.tax_form_1099k(User.last&.id, Time.current.year.pred, "https://www.gumroad.com")
   end
@@ -181,7 +185,7 @@ class ContactingCreatorMailerPreview < ActionMailer::Preview
   end
 
   def review_submitted
-    ContactingCreatorMailer.review_submitted(ProductReview.where.not(message: nil).last&.id)
+    ContactingCreatorMailer.review_submitted(ProductReview.last&.id)
   end
 
   def upcoming_call_reminder

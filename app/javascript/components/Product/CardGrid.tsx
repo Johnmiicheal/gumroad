@@ -41,8 +41,13 @@ export const useSearchReducer = (initial: Omit<State, "offset">) => {
   const [state, dispatch] = React.useReducer(
     (state: State, action: Action) => {
       switch (action.type) {
-        case "set-params":
-          return { params: action.params, results: null, offset: action.params.from };
+        case "set-params": {
+          const params = {
+            ...action.params,
+            taxonomy: action.params.taxonomy === "discover" ? undefined : action.params.taxonomy,
+          };
+          return { params, results: null, offset: action.params.from };
+        }
         case "set-results":
           return { ...state, results: action.results };
         case "load-more":
@@ -213,7 +218,7 @@ export const CardGrid = ({
   return (
     <div className="with-sidebar">
       {hideFilters ? null : (
-        <div className="stack top-28 lg:sticky" aria-label="Filters">
+        <div className="stack top-12 lg:sticky" aria-label="Filters">
           <header>
             {title ?? "Filters"}
             {anyFilters ? (

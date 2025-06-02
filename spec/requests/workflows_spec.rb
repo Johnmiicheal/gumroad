@@ -29,6 +29,7 @@ describe("Workflows", js: true, type: :feature) do
 
     allow_any_instance_of(User).to receive(:sales_cents_total).and_return(Installment::MINIMUM_SALES_CENTS_VALUE)
     create(:merchant_account_stripe_connect, user: seller)
+    create(:payment_completed, user: seller)
   end
 
   include_context "with switching account to user as admin for seller"
@@ -1303,7 +1304,7 @@ describe("Workflows", js: true, type: :feature) do
       select_disclosure "Publish" do
         click_on "Publish now"
       end
-      expect(page).to have_alert(text: "You cannot publish a workflow until you have made at least $100 in sales and received a payout")
+      expect(page).to have_alert(text: "You cannot publish a workflow until you have made at least $100 in total earnings and received a payout")
       expect(workflow.reload.published_at).to be_nil
       expect(workflow.name).to eq("Product workflow")
     end

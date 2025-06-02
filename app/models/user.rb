@@ -9,9 +9,9 @@ class User < ApplicationRecord
   include Flipper::Identifier, FlagShihTzu, CurrencyHelper, Mongoable, JsonData, Deletable, MoneyBalance,
           DeviseInternal, PayoutSchedule, SocialFacebook, SocialTwitter, SocialGoogle, SocialApple, SocialGoogleMobile,
           StripeConnect, Stats, PaymentStats, FeatureStatus, Risk, Compliance, Validations, Taxation, PingNotification,
-          Email, AsyncDeviseNotification, Posts, AffiliatedProducts, Followers, MailerLevel,
+          Email, AsyncDeviseNotification, Posts, AffiliatedProducts, Followers, LowBalanceFraudCheck, MailerLevel,
           DirectAffiliates, AsJson, Tier, Recommendations, Team, AustralianBacktaxes, WithCdnUrl,
-          TwoFactorAuthentication, Versionable, Comments, VipCreator, SignedUrlHelper
+          TwoFactorAuthentication, Versionable, Comments, VipCreator, SignedUrlHelper, Purchases
 
   stripped_fields :name, :facebook_meta_tag, :google_analytics_id, :username, :email, :support_email
 
@@ -517,6 +517,10 @@ class User < ApplicationRecord
     find_by(id: single_key)
   end
 
+  def admin_page_url
+    Rails.application.routes.url_helpers.admin_user_url(self, protocol: PROTOCOL, host: DOMAIN)
+  end
+
   def profile_url(custom_domain_url: nil, recommended_by: nil)
     uri = URI(custom_domain_url || subdomain_with_protocol)
     uri.query = { recommended_by: }.to_query if recommended_by.present?
@@ -854,10 +858,6 @@ class User < ApplicationRecord
     MoneyFormatter.format(saved_fee_cents, :usd, no_cents_if_whole: true, symbol: true)
   end
 
-  def instantly_payable_amount_cents_on_stripe
-    StripePayoutProcessor.instantly_payable_amount_cents_on_stripe(self)
-  end
-
   def eligible_for_instant_payouts?
     !suspended? &&
       !payouts_paused? &&
@@ -869,33 +869,14 @@ class User < ApplicationRecord
     eligible_for_instant_payouts? && (active_bank_account&.supports_instant_payouts? || false)
   end
 
-  def instantly_payable_balances
-    amount_cents_available_on_stripe = instantly_payable_amount_cents_on_stripe
-    first_unpayable_balance_held_by_stripe_date = nil
-    unpaid_balances.select { _1.merchant_account.holder_of_funds == HolderOfFunds::STRIPE }.sort_by(&:date).map(&:date).each do |date|
-      balance_cents_held_by_stripe_till_date = unpaid_balances.where("date <= ?", date).select { _1.merchant_account.holder_of_funds == HolderOfFunds::STRIPE }.sum(&:holding_amount_cents)
-      if (balance_cents_held_by_stripe_till_date * 100.0 / (100 + StripePayoutProcessor::INSTANT_PAYOUT_FEE_PERCENT)).floor > amount_cents_available_on_stripe
-        first_unpayable_balance_held_by_stripe_date = date
-        break
-      end
-    end
-    payable_balances = unpaid_balances
-    payable_balances = payable_balances.where("date < ?", first_unpayable_balance_held_by_stripe_date) if first_unpayable_balance_held_by_stripe_date.present?
-    payable_balances.select { _1.merchant_account.holder_of_funds.in?([HolderOfFunds::STRIPE, HolderOfFunds::GUMROAD]) }.sort_by(&:date)
-  end
-
-  def instantly_payable_balance_amount_cents
-    instantly_payable_balances.sum(&:holding_amount_cents)
-  end
-
   def payouts_paused?
     payouts_paused_internally? || payouts_paused_by_user?
   end
 
-  def made_a_successful_sale_with_a_stripe_connect_account?
+  def made_a_successful_sale_with_a_stripe_connect_or_paypal_connect_account?
     ids = merchant_accounts
-      .stripe
-      .where("json_data->>'$.meta.stripe_connect' = ?", "true")
+      .stripe_connect
+      .or(merchant_accounts.paypal)
       .pluck(:id)
     return false if ids.empty?
 
@@ -906,15 +887,17 @@ class User < ApplicationRecord
 
   def eligible_for_abandoned_cart_workflows?
     return true if is_team_member?
+    return false if suspended?
 
-    stripe_connect_account.present? || made_a_successful_sale_with_a_stripe_connect_account? || payments.completed.exists?
+    has_completed_payouts?
   end
 
   def eligible_to_send_emails?
     return true if is_team_member?
     return false if suspended?
     return false if sales_cents_total < Installment::MINIMUM_SALES_CENTS_VALUE
-    stripe_connect_account.present? || made_a_successful_sale_with_a_stripe_connect_account? || payments.completed.exists?
+
+    has_completed_payouts?
   end
 
   LAST_ALLOWED_TIME_FOR_PRODUCT_LEVEL_REFUND_POLICY = Time.new(2025, 3, 31).end_of_day
@@ -998,6 +981,14 @@ class User < ApplicationRecord
     return nil unless has_paypal_account_connected?
 
     paypal_connect_account.paypal_account_details&.dig("primary_email")
+  end
+
+  def purchased_small_bets?
+    small_bets_product_id = GlobalConfig.get("SMALL_BETS_PRODUCT_ID",  2866567)
+
+    purchases.all_success_states_including_test
+      .where(link_id: small_bets_product_id)
+      .exists?
   end
 
   protected
@@ -1174,5 +1165,10 @@ class User < ApplicationRecord
                     saved_change_to_bio?
 
       Iffy::Profile::IngestJob.perform_async(id)
+    end
+
+    def has_completed_payouts?
+      payments.completed.exists? ||
+        made_a_successful_sale_with_a_stripe_connect_or_paypal_connect_account?
     end
 end

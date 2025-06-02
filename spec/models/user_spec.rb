@@ -1494,17 +1494,6 @@ describe User, :vcr do
     end
   end
 
-  describe "balance_formatted" do
-    before do
-      @user = create(:user, unpaid_balance_cents: 1_00)
-    end
-
-    it "returns the user's balance" do
-      expect(@user.unpaid_balance_cents).to eq 100
-      expect(@user.balance_formatted).to eq "$1"
-    end
-  end
-
   describe "append http" do
     it "appends an http to notification_endpoint" do
       user = create(:user)
@@ -2684,6 +2673,13 @@ describe User, :vcr do
     end
   end
 
+  describe "#admin_page_url" do
+    it "returns the admin users page url" do
+      user = create(:user)
+      expect(user.admin_page_url).to eq("#{PROTOCOL}://#{DOMAIN}/admin/users/#{user.id}")
+    end
+  end
+
   describe "#compliance_info_resettable?" do
     it "returns true if the user doesn't have an active Stripe account" do
       user = create(:user_with_compliance_info)
@@ -2888,46 +2884,6 @@ describe User, :vcr do
     end
   end
 
-  describe "#instantly_payable_amount_cents_on_stripe" do
-    let(:user) { create(:user) }
-
-    it "returns the maximum instant payout amount from StripePayoutProcessor" do
-      allow(StripePayoutProcessor).to receive(:instantly_payable_amount_cents_on_stripe).with(user).and_return(123456)
-      expect(user.instantly_payable_amount_cents_on_stripe).to eq(123456)
-    end
-  end
-
-  describe "#instantly_payable_balances" do
-    it "returns maximum unpaid balances whose sum is less than instantly payable amount available on Stripe" do
-      user = create(:user)
-      merchant_account = create(:merchant_account_stripe, user:)
-
-      bal1 = create(:balance, user:, merchant_account:, date: Date.current - 3.days, amount_cents: 500_00, holding_amount_cents: 500_00)
-      bal2 = create(:balance, user:, merchant_account:, date: Date.current - 2.days, amount_cents: 400_00, holding_amount_cents: 400_00)
-      bal3 = create(:balance, user:, merchant_account:, date: Date.current - 1.days, amount_cents: 300_00, holding_amount_cents: 300_00)
-      bal4 = create(:balance, user:, merchant_account:, date: Date.current, amount_cents: 200_00, holding_amount_cents: 200_00)
-      bal5 = create(:balance, user:, date: Date.current - 3.days, amount_cents: 500_00, holding_amount_cents: 500_00)
-      bal6 = create(:balance, user:, date: Date.current - 2.days, amount_cents: 500_00, holding_amount_cents: 500_00)
-      bal7 = create(:balance, user:, date: Date.current - 1.days, amount_cents: 500_00, holding_amount_cents: 500_00)
-      bal8 = create(:balance, user:, date: Date.current, amount_cents: 500_00, holding_amount_cents: 500_00)
-
-      allow(StripePayoutProcessor).to receive(:instantly_payable_amount_cents_on_stripe).with(user).and_return(1400_00)
-      expect(user.instantly_payable_balances).to match_array([bal1, bal2, bal3, bal4, bal5, bal6, bal7, bal8])
-
-      allow(StripePayoutProcessor).to receive(:instantly_payable_amount_cents_on_stripe).with(user).and_return(1000_00)
-      expect(user.instantly_payable_balances).to match_array([bal1, bal2, bal5, bal6])
-
-      allow(StripePayoutProcessor).to receive(:instantly_payable_amount_cents_on_stripe).with(user).and_return(1200_00)
-      expect(user.instantly_payable_balances).to match_array([bal1, bal2, bal3, bal5,  bal6, bal7])
-
-      allow(StripePayoutProcessor).to receive(:instantly_payable_amount_cents_on_stripe).with(user).and_return(600_00)
-      expect(user.instantly_payable_balances).to match_array([bal1, bal5])
-
-      allow(StripePayoutProcessor).to receive(:instantly_payable_amount_cents_on_stripe).with(user).and_return(1500_00)
-      expect(user.instantly_payable_balances).to match_array([bal1, bal2, bal3, bal4, bal5, bal6, bal7, bal8])
-    end
-  end
-
   describe "#eligible_for_instant_payouts?" do
     let(:user) { create(:user) }
     let!(:compliance_info) { create(:user_compliance_info, user:) }
@@ -3042,7 +2998,7 @@ describe User, :vcr do
     end
   end
 
-  describe "#made_a_successful_sale_with_a_stripe_connect_account?" do
+  describe "#made_a_successful_sale_with_a_stripe_connect_or_paypal_connect_account?" do
     let(:user) { create(:user) }
     let!(:stripe_connect_account) { create(:merchant_account_stripe_connect, user:) }
 
@@ -3053,7 +3009,7 @@ describe User, :vcr do
 
       context "when the Stripe Connect account is alive" do
         it "returns true" do
-          expect(user.made_a_successful_sale_with_a_stripe_connect_account?).to eq(true)
+          expect(user.made_a_successful_sale_with_a_stripe_connect_or_paypal_connect_account?).to eq(true)
         end
       end
 
@@ -3063,7 +3019,7 @@ describe User, :vcr do
         end
 
         it "returns true" do
-          expect(user.made_a_successful_sale_with_a_stripe_connect_account?).to eq(true)
+          expect(user.made_a_successful_sale_with_a_stripe_connect_or_paypal_connect_account?).to eq(true)
         end
       end
     end
@@ -3074,7 +3030,7 @@ describe User, :vcr do
       end
 
       it "returns false" do
-        expect(user.made_a_successful_sale_with_a_stripe_connect_account?).to eq(false)
+        expect(user.made_a_successful_sale_with_a_stripe_connect_or_paypal_connect_account?).to eq(false)
       end
     end
 
@@ -3082,7 +3038,53 @@ describe User, :vcr do
       it "returns false" do
         stripe_connect_account.destroy!
 
-        expect(user.made_a_successful_sale_with_a_stripe_connect_account?).to eq(false)
+        expect(user.made_a_successful_sale_with_a_stripe_connect_or_paypal_connect_account?).to eq(false)
+      end
+    end
+
+    context "when the user has made a successful sale with a PayPal Connect account" do
+      let!(:paypal_connect_account) { create(:merchant_account_paypal, user:) }
+
+      before do
+        create(:purchase, seller: user, link: create(:product, user:), merchant_account: paypal_connect_account)
+      end
+
+      context "when the PayPal Connect account is alive" do
+        it "returns true" do
+          expect(user.made_a_successful_sale_with_a_stripe_connect_or_paypal_connect_account?).to eq(true)
+        end
+      end
+
+      context "when the PayPal Connect account has been deleted" do
+        before do
+          paypal_connect_account.mark_deleted!
+        end
+
+        it "returns true" do
+          expect(user.made_a_successful_sale_with_a_stripe_connect_or_paypal_connect_account?).to eq(true)
+        end
+      end
+    end
+
+    context "when the user has not made a successful sale with a PayPal Connect account" do
+      let!(:paypal_connect_account) { create(:merchant_account_paypal, user:) }
+
+      before do
+        create(:failed_purchase, seller: user, link: create(:product, user:), merchant_account: paypal_connect_account)
+      end
+
+      it "returns false" do
+        expect(user.made_a_successful_sale_with_a_stripe_connect_or_paypal_connect_account?).to eq(false)
+      end
+    end
+
+    context "when the user has no PayPal Connect account" do
+      let!(:paypal_connect_account) { create(:merchant_account_paypal, user:) }
+
+      it "returns false" do
+        paypal_connect_account.destroy!
+
+        expect(user.made_a_successful_sale_with_a_stripe_connect_or_paypal_connect_account?).to eq(false)
       end
     end
   end
@@ -3093,10 +3095,6 @@ describe User, :vcr do
     context "when user has a Stripe Connect account" do
       let!(:stripe_connect_account) { create(:merchant_account_stripe_connect, user:) }
 
-      it "returns true if the Stripe Connect account is alive" do
-        expect(user.eligible_for_abandoned_cart_workflows?).to eq(true)
-      end
-
       it "returns false if the Stripe Connect account has been deleted and there were no linked successful sales" do
         stripe_connect_account.mark_deleted!
 
@@ -3106,6 +3104,23 @@ describe User, :vcr do
       it "returns true if the Stripe Connect account has been deleted and there was at least one successful sale with that Stripe Connect account" do
         create(:purchase, seller: user, link: create(:product, user:), merchant_account: stripe_connect_account)
         stripe_connect_account.mark_deleted!
+
+        expect(user.eligible_for_abandoned_cart_workflows?).to eq(true)
+      end
+    end
+
+    context "when user has a PayPal Connect account" do
+      let!(:paypal_connect_account) { create(:merchant_account_paypal, user:) }
+
+      it "returns false if the PayPal Connect account has been deleted and there were no linked successful sales" do
+        paypal_connect_account.mark_deleted!
+
+        expect(user.eligible_for_abandoned_cart_workflows?).to eq(false)
+      end
+
+      it "returns true if the PayPal Connect account has been deleted and there was at least one successful sale with that PayPal Connect account" do
+        create(:purchase, seller: user, link: create(:product, user:), merchant_account: paypal_connect_account)
+        paypal_connect_account.mark_deleted!
 
         expect(user.eligible_for_abandoned_cart_workflows?).to eq(true)
       end
@@ -3145,10 +3160,6 @@ describe User, :vcr do
           allow(user).to receive(:sales_cents_total).and_return(Installment::MINIMUM_SALES_CENTS_VALUE)
         end
 
-        it "returns true if the Stripe Connect account is alive" do
-          expect(user.eligible_to_send_emails?).to eq(true)
-        end
-
         it "returns false if the Stripe Connect account has been deleted and there were no linked successful sales" do
           stripe_connect_account.mark_deleted!
 
@@ -3158,6 +3169,27 @@ describe User, :vcr do
         it "returns true if the Stripe Connect account has been deleted and there was at least one successful sale with that Stripe Connect account" do
           create(:purchase, seller: user, link: create(:product, user:), merchant_account: stripe_connect_account)
           stripe_connect_account.mark_deleted!
+
+          expect(user.eligible_to_send_emails?).to eq(true)
+        end
+      end
+
+      context "when user has a PayPal Connect account" do
+        let!(:paypal_connect_account) { create(:merchant_account_paypal, user:) }
+
+        before do
+          allow(user).to receive(:sales_cents_total).and_return(Installment::MINIMUM_SALES_CENTS_VALUE)
+        end
+
+        it "returns false if the PayPal Connect account has been deleted and there were no linked successful sales" do
+          paypal_connect_account.mark_deleted!
+
+          expect(user.eligible_to_send_emails?).to eq(false)
+        end
+
+        it "returns true if the PayPal Connect account has been deleted and there was at least one successful sale with that PayPal Connect account" do
+          create(:purchase, seller: user, link: create(:product, user:), merchant_account: paypal_connect_account)
+          paypal_connect_account.mark_deleted!
 
           expect(user.eligible_to_send_emails?).to eq(true)
         end
@@ -3320,6 +3352,25 @@ describe User, :vcr do
         other_product.update!(community_chat_enabled: false)
         expect(user.accessible_communities_ids).to eq([])
       end
+    end
+  end
+
+  describe "#purchased_small_bets?" do
+    let(:user) { create(:user) }
+    let(:small_bets_product) { create(:product) }
+
+    before do
+      allow(GlobalConfig).to receive(:get)
+        .with("SMALL_BETS_PRODUCT_ID", 2866567)
+        .and_return(small_bets_product.id)
+    end
+
+    it "returns true if the user has purchased the small bets product" do
+      expect(user.purchased_small_bets?).to eq(false)
+
+      create(:purchase, purchaser: user, link: small_bets_product)
+
+      expect(user.purchased_small_bets?).to eq(true)
     end
   end
 end
